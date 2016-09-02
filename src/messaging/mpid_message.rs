@@ -127,7 +127,7 @@ impl Debug for MpidMessage {
 }
 
 #[cfg(test)]
-mod test {
+mod tests{
     use super::*;
     use rand;
     use xor_name::XorName;

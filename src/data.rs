@@ -94,7 +94,7 @@ impl DataIdentifier {
 }
 
 #[cfg(test)]
-mod test {
+mod tests{
     extern crate rand;
 
     use super::*;

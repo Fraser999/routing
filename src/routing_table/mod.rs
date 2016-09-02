@@ -110,8 +110,9 @@
 // is considered to be legitimate, if a majority of group members have sent a message with the same
 // content.
 
-// TODO - remove this
+// TODO - remove these
 #![allow(unused)]
+#![cfg_attr(feature="clippy", allow(module_inception))]
 
 mod result;
 mod xorable;

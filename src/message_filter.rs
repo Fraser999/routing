@@ -136,7 +136,7 @@ impl TimestampedMessage {
 
 
 #[cfg(test)]
-mod test {
+mod tests{
     use rand;
     use rand::Rng;
     use std::thread;

@@ -71,7 +71,7 @@ impl Debug for PlainData {
 }
 
 #[cfg(test)]
-mod test {
+mod tests{
     use super::PlainData;
     use itertools::Itertools;
     use rand::{self, Rng};

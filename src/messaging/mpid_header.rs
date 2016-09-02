@@ -145,7 +145,7 @@ impl Debug for MpidHeader {
 }
 
 #[cfg(test)]
-mod test {
+mod tests{
     use super::*;
     use messaging;
     use rand;

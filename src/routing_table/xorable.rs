@@ -22,12 +22,12 @@ use std::cmp::Ordering;
 ///
 /// These are considered points in a space with the XOR metric, and need to implement the
 /// functionality required by `RoutingTable` to use them as node names.
-pub trait Xorable {
+pub trait Xorable: Ord {
     /// Returns the bucket that `other` belongs to, in the routing table of the node with name
     /// `self`. This must be the number of leading bits in which `self` and `other` agree. E. g.
     /// the bucket index of `other = 11110000` for `self = 11111111` is 4, because the fifth bit is
     /// the first one in which they differ.
-    fn max_bucket_index(&self, other: &Self) -> usize;
+    fn common_prefix(&self, other: &Self) -> usize;
 
     /// Compares the distance of the arguments to `self`. Returns `Less` if `lhs` is closer,
     /// `Greater` if `rhs` is closer, and `Equal` if `lhs == rhs`. (The XOR distance can only be
@@ -39,19 +39,15 @@ pub trait Xorable {
 
     /// Returns a copy of `self`, with the `index`-th bit flipped.
     ///
-    /// If the parameter does not address one of the name's bits, i. e. if it does not satisfy
-    /// `index < XOR_NAME_BITS`, the result will be equal to the argument.
+    /// If `index` exceeds the number of bits in `self`, an unmodified copy of `self` is returned.
     fn with_flipped_bit(&self, index: usize) -> Self;
-
-    /// Returns a default copy(all zero)
-    fn all_zero_copy() -> Self;
 }
 
 
 macro_rules! impl_xorable_for_array {
     ($t: ident, $l: expr) => {
         impl Xorable for [$t; $l] {
-            fn max_bucket_index(&self, other: &[$t; $l]) -> usize {
+            fn common_prefix(&self, other: &[$t; $l]) -> usize {
                 for byte_index in 0..$l {
                     if self[byte_index] != other[byte_index] {
                         return (byte_index * mem::size_of::<$t>() * 8) +
@@ -86,15 +82,10 @@ macro_rules! impl_xorable_for_array {
                 copy[index / bits] ^= 1 << (bits - 1 - index % bits);
                 copy
             }
-
-            fn all_zero_copy() -> Self {
-                [0; $l]
-            }
         }
     }
 }
 
-impl_xorable_for_array!(u8, 64);
 impl_xorable_for_array!(u8, 32);
 impl_xorable_for_array!(u8, 16);
 impl_xorable_for_array!(u8, 8);
@@ -103,7 +94,7 @@ impl_xorable_for_array!(u8, 4);
 macro_rules! impl_xorable {
     ($t:ident) => {
         impl Xorable for $t {
-            fn max_bucket_index(&self, other: &Self) -> usize {
+            fn common_prefix(&self, other: &Self) -> usize {
                 (self ^ other).leading_zeros() as usize
             }
 
@@ -123,10 +114,6 @@ macro_rules! impl_xorable {
                 let pow_i = 1 << (mem::size_of::<Self>() * 8 - 1 - index); // 1 on bit i.
                 self ^ pow_i
             }
-
-            fn all_zero_copy() -> Self {
-                0
-            }
         }
     }
 }
@@ -140,22 +127,22 @@ impl_xorable!(u8);
 
 
 #[cfg(test)]
-mod test {
+mod tests{
     use super::*;
     use std::cmp::Ordering;
 
     #[test]
-    fn max_bucket_index() {
-        assert_eq!(0, 0u8.max_bucket_index(&128u8));
-        assert_eq!(3, 10u8.max_bucket_index(&16u8));
-        assert_eq!(0, 0u16.max_bucket_index(&(1 << 15)));
-        assert_eq!(11, 10u16.max_bucket_index(&16u16));
+    fn common_prefix() {
+        assert_eq!(0, 0u8.common_prefix(&128u8));
+        assert_eq!(3, 10u8.common_prefix(&16u8));
+        assert_eq!(0, 0u16.common_prefix(&(1 << 15)));
+        assert_eq!(11, 10u16.common_prefix(&16u16));
     }
 
     #[test]
-    fn max_bucket_index_array() {
-        assert_eq!(0, [0, 0, 0, 0].max_bucket_index(&[128u8, 0, 0, 0]));
-        assert_eq!(11, [0, 10u8, 0, 0].max_bucket_index(&[0, 16u8, 0, 0]));
+    fn common_prefix_array() {
+        assert_eq!(0, [0, 0, 0, 0].common_prefix(&[128u8, 0, 0, 0]));
+        assert_eq!(11, [0, 10u8, 0, 0].common_prefix(&[0, 16u8, 0, 0]));
     }
 
     #[test]

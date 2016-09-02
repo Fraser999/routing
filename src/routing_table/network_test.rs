@@ -127,7 +127,7 @@ impl Network {
 
     /// Splits the given node's group.
     fn split(&mut self, _name: u64) {
-            for (_ , node) in self.nodes.iter_mut() {
+            for (_ , node) in &mut self.nodes {
                 node.split();
             }
     }
@@ -135,7 +135,7 @@ impl Network {
     /// Merges the group of the given peer with its sister groups.
     fn merge(&mut self, name: u64) {
         if let Some(_) = unwrap!(self.nodes.get_mut(&name)).merge() {
-            for (_, node) in self.nodes.iter_mut() {
+            for (_, node) in &mut self.nodes {
                 let _ = node.merge();
             }
         }
