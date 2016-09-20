@@ -15,37 +15,37 @@
 // Please review the Licences for the specific language governing permissions and limitations
 // relating to use of the SAFE Network Software.
 
-use crust::{ConnectionInfoResult, CrustError, PeerId, PrivConnectionInfo, PubConnectionInfo,
-            Service};
-use crust::Event as CrustEvent;
-use itertools::Itertools;
-#[cfg(feature = "use-mock-crust")]
-use kademlia_routing_table::RoutingTable;
-use kademlia_routing_table::{AddedNodeDetails, ContactInfo, DroppedNodeDetails};
-use maidsafe_utilities::serialisation;
-use rust_sodium::crypto::{box_, sign};
-use rust_sodium::crypto::hash::sha256;
-use std::{cmp, fmt, iter};
-use std::fmt::{Debug, Formatter};
-use std::sync::mpsc::Sender;
-use std::time::{Duration, Instant};
 
 use ack_manager::{Ack, AckManager};
 use action::Action;
 use authority::Authority;
 use cache::Cache;
+use crust::{ConnectionInfoResult, CrustError, PeerId, PrivConnectionInfo, PubConnectionInfo,
+            Service};
+use crust::Event as CrustEvent;
 use error::{InterfaceError, RoutingError};
 use event::Event;
 use id::{FullId, PublicId};
+use itertools::Itertools;
+use kademlia_routing_table::{AddedNodeDetails, ContactInfo, DroppedNodeDetails};
+#[cfg(feature = "use-mock-crust")]
+use kademlia_routing_table::RoutingTable;
+use maidsafe_utilities::serialisation;
 use message_accumulator::MessageAccumulator;
 use message_filter::MessageFilter;
 use messages::{DEFAULT_PRIORITY, DirectMessage, HopMessage, Message, MessageContent,
                RoutingMessage, SignedMessage, UserMessage, UserMessageCache};
 use peer_manager::{ConnectionInfoPreparedResult, ConnectionInfoReceivedResult, GROUP_SIZE,
                    PeerManager, PeerState, QUORUM_SIZE};
+use rust_sodium::crypto::{box_, sign};
+use rust_sodium::crypto::hash::sha256;
 use signed_message_filter::SignedMessageFilter;
 use state_machine::Transition;
 use stats::Stats;
+use std::{cmp, fmt, iter};
+use std::fmt::{Debug, Formatter};
+use std::sync::mpsc::Sender;
+use std::time::{Duration, Instant};
 use super::common::{Base, Bootstrapped, USER_MSG_CACHE_EXPIRY_DURATION_SECS};
 use timer::Timer;
 use tunnels::Tunnels;
@@ -329,9 +329,13 @@ impl Node {
                    self);
             return;
         }
-
-        // TODO(afck): Keep track of this connection: Disconnect if we don't receive a
-        // NodeIdentify.
+        if !self.crust_service.is_peer_whitelisted(&peer_id) {
+            debug!("{:?} Received ConnectSuccess, but {:?} is not whitelisted.",
+                   self,
+                   peer_id);
+            self.disconnect_peer(&peer_id);
+            return;
+        }
 
         // Remove tunnel connection if we have one for this peer already
         if let Some(tunnel_id) = self.tunnels.remove_tunnel_for(&peer_id) {
@@ -346,8 +350,9 @@ impl Node {
                   pub_id.name());
             return;
         }
-        // TODO: Keep track of this peer, even if this returns false.
+
         self.peer_mgr.connected_to(&peer_id);
+
         debug!("{:?} Received ConnectSuccess from {:?}. Sending NodeIdentify.",
                self,
                peer_id);
@@ -613,7 +618,9 @@ impl Node {
             (MessageContent::GetCloseGroup(message_id), src, Authority::NaeManager(dst_name)) => {
                 self.handle_get_close_group_request(src, dst_name, message_id)
             }
-            (MessageContent::ConnectionInfo { encrypted_connection_info, nonce_bytes, public_id },
+            (MessageContent::ConnectionInfo { encrypted_connection_info,
+                                              nonce_bytes,
+                                              public_id },
              src @ Authority::Client { .. },
              Authority::ManagedNode(dst_name)) => {
                 self.handle_connection_info_from_client(encrypted_connection_info,
@@ -622,10 +629,14 @@ impl Node {
                                                         dst_name,
                                                         public_id)
             }
-            (MessageContent::ConnectionInfo { encrypted_connection_info, nonce_bytes, public_id },
+            (MessageContent::ConnectionInfo { encrypted_connection_info,
+                                              nonce_bytes,
+                                              public_id },
              Authority::ManagedNode(src_name),
              Authority::Client { .. }) |
-            (MessageContent::ConnectionInfo { encrypted_connection_info, nonce_bytes, public_id },
+            (MessageContent::ConnectionInfo { encrypted_connection_info,
+                                              nonce_bytes,
+                                              public_id },
              Authority::ManagedNode(src_name),
              Authority::ManagedNode(_)) => {
                 self.handle_connection_info_from_node(encrypted_connection_info,
@@ -784,6 +795,11 @@ impl Node {
                               peer_id: PeerId,
                               client_restriction: bool)
                               -> Result<(), RoutingError> {
+        if !client_restriction && !self.crust_service.is_peer_whitelisted(&peer_id) {
+            warn!("{:?} Client is not whitelisted - dropping", self);
+            self.disconnect_peer(&peer_id);
+            return Ok(());
+        }
         if *public_id.name() != XorName(sha256::hash(&public_id.signing_public_key().0).0) {
             warn!("{:?} Incoming Connection not validated as a proper client - dropping",
                   self);
@@ -1311,6 +1327,12 @@ impl Node {
             let _ = self.event_sender.send(Event::Tick);
             let tick_period = Duration::from_secs(TICK_TIMEOUT_SECS);
             self.tick_timer_token = self.timer.schedule(tick_period);
+
+            for peer_id in self.peer_mgr.remove_expired_connections() {
+                debug!("{:?} Disconnecting from timed out peer {:?}", self, peer_id);
+                let _ = self.crust_service.disconnect(peer_id);
+            }
+
             return true;
         }
 

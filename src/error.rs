@@ -18,9 +18,9 @@
 use action::Action;
 use crust::{self, PeerId};
 use event::Event;
-use std::sync::mpsc::{RecvError, SendError};
 use maidsafe_utilities::event_sender::{EventSenderError, MaidSafeEventCategory};
 use maidsafe_utilities::serialisation;
+use std::sync::mpsc::{RecvError, SendError};
 
 #[derive(Debug)]
 /// The type of errors that can occur if routing is unable to handle a send request.

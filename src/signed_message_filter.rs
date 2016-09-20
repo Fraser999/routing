@@ -18,10 +18,10 @@
 use crust::PeerId;
 use lru_time_cache::LruCache;
 use maidsafe_utilities;
-use std::time::Duration;
 
 use message_filter::MessageFilter;
 use messages::SignedMessage;
+use std::time::Duration;
 
 const INCOMING_EXPIRY_DURATION_SECS: u64 = 60 * 20;
 const OUTGOING_EXPIRY_DURATION_SECS: u64 = 60 * 10;

@@ -15,8 +15,8 @@
 // Please review the Licences for the specific language governing permissions and limitations
 // relating to use of the SAFE Network Software.
 
-use std::mem;
 use std::cmp::Ordering;
+use std::mem;
 
 /// A sequence of bits, as a point in XOR space.
 ///
@@ -34,15 +34,17 @@ pub trait Xorable: Ord {
     /// equal if the arguments are equal.)
     fn cmp_distance(&self, lhs: &Self, rhs: &Self) -> Ordering;
 
+    /// Returns `true` if the `i`-th bit is `1`.
+    fn bit(&self, i: usize) -> bool;
+
     /// Returns `true` if the `i`-th bit of other has a different value to the `i`-th bit of `self`.
     fn differs_in_bit(&self, other: &Self, i: usize) -> bool;
 
     /// Returns a copy of `self`, with the `index`-th bit flipped.
     ///
     /// If `index` exceeds the number of bits in `self`, an unmodified copy of `self` is returned.
-    fn with_flipped_bit(&self, index: usize) -> Self;
+    fn with_flipped_bit(&self, i: usize) -> Self;
 }
-
 
 macro_rules! impl_xorable_for_array {
     ($t: ident, $l: expr) => {
@@ -66,6 +68,13 @@ macro_rules! impl_xorable_for_array {
                 Ordering::Equal
             }
 
+            fn bit(&self, i: usize) -> bool {
+                let bits = mem::size_of::<$t>() * 8;
+                let index = i / bits;
+                let pow_i = 1 << (bits - 1 - (i % bits));
+                self[index] & pow_i != 0
+            }
+
             fn differs_in_bit(&self, name: &[$t; $l], i: usize) -> bool {
                 let bits = mem::size_of::<$t>() * 8;
                 let index = i / bits;
@@ -73,13 +82,13 @@ macro_rules! impl_xorable_for_array {
                 (self[index] ^ name[index]) & pow_i != 0
             }
 
-            fn with_flipped_bit(&self, index: usize) -> Self {
+            fn with_flipped_bit(&self, i: usize) -> Self {
                 let bits = mem::size_of::<$t>() * 8;
                 let mut copy = *self;
-                if index >= bits * self.len() {
+                if i >= bits * self.len() {
                     return copy;
                 }
-                copy[index / bits] ^= 1 << (bits - 1 - index % bits);
+                copy[i / bits] ^= 1 << (bits - 1 - i % bits);
                 copy
             }
         }
@@ -102,16 +111,21 @@ macro_rules! impl_xorable {
                 Ord::cmp(&(lhs ^ self), &(rhs ^ self))
             }
 
+            fn bit(&self, i: usize) -> bool {
+                let pow_i = 1 << (mem::size_of::<Self>() * 8 - 1 - i); // 1 on bit i.
+                self & pow_i != 0
+            }
+
             fn differs_in_bit(&self, name: &Self, i: usize) -> bool {
                 let pow_i = 1 << (mem::size_of::<Self>() * 8 - 1 - i); // 1 on bit i.
                 (self ^ name) & pow_i != 0
             }
 
-            fn with_flipped_bit(&self, index: usize) -> Self {
-                if index >= mem::size_of::<Self>() * 8 {
+            fn with_flipped_bit(&self, i: usize) -> Self {
+                if i >= mem::size_of::<Self>() * 8 {
                     return *self;
                 }
-                let pow_i = 1 << (mem::size_of::<Self>() * 8 - 1 - index); // 1 on bit i.
+                let pow_i = 1 << (mem::size_of::<Self>() * 8 - 1 - i); // 1 on bit i.
                 self ^ pow_i
             }
         }
@@ -127,9 +141,9 @@ impl_xorable!(u8);
 
 
 #[cfg(test)]
-mod tests{
-    use super::*;
+mod tests {
     use std::cmp::Ordering;
+    use super::*;
 
     #[test]
     fn common_prefix() {
@@ -168,6 +182,25 @@ mod tests{
                    [1u8, 2, 3, 4].cmp_distance(&[1, 2, 7, 4], &[1, 2, 6, 4]));
         assert_eq!(Ordering::Greater,
                    [1u8, 2, 3, 4].cmp_distance(&[1, 2, 6, 4], &[1, 2, 7, 4]));
+    }
+
+    #[test]
+    fn bit() {
+        assert_eq!(false, 0b00101000u8.bit(0));
+        assert_eq!(true, 0b00101000u8.bit(2));
+        assert_eq!(false, 0b00101000u8.bit(3));
+    }
+
+    #[test]
+    fn bit_array() {
+        assert_eq!(true, [2u8, 128, 1, 0].bit(6));
+        assert_eq!(true, [2u8, 128, 1, 0].bit(8));
+        assert_eq!(true, [2u8, 128, 1, 0].bit(23));
+        assert_eq!(false, [2u8, 128, 1, 0].bit(5));
+        assert_eq!(false, [2u8, 128, 1, 0].bit(7));
+        assert_eq!(false, [2u8, 128, 1, 0].bit(9));
+        assert_eq!(false, [2u8, 128, 1, 0].bit(22));
+        assert_eq!(false, [2u8, 128, 1, 0].bit(24));
     }
 
     #[test]

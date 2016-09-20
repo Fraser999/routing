@@ -15,6 +15,9 @@
 // Please review the Licences for the specific language governing permissions and limitations
 // relating to use of the SAFE Network Software.
 
+use maidsafe_utilities::SeededRng;
+use rand::{Rng, XorShiftRng};
+use rust_sodium;
 use std::cell::RefCell;
 use std::cmp;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -23,9 +26,6 @@ use std::rc::{Rc, Weak};
 
 use super::crust::{ConnectionInfoResult, CrustEventSender, Event, PeerId, PrivConnectionInfo,
                    PubConnectionInfo};
-use maidsafe_utilities::SeededRng;
-use rand::XorShiftRng;
-use rust_sodium;
 
 /// Mock network. Create one before testing with mocks. Use it to create `ServiceHandle`s.
 #[derive(Clone)]
@@ -34,7 +34,7 @@ pub struct Network(Rc<RefCell<NetworkImpl>>);
 pub struct NetworkImpl {
     services: HashMap<Endpoint, Weak<RefCell<ServiceImpl>>>,
     next_endpoint: usize,
-    queue: VecDeque<(Endpoint, Endpoint, Packet)>,
+    queue: HashMap<(Endpoint, Endpoint), VecDeque<Packet>>,
     blocked_connections: HashSet<(Endpoint, Endpoint)>,
     rng: SeededRng,
 }
@@ -51,7 +51,7 @@ impl Network {
         Network(Rc::new(RefCell::new(NetworkImpl {
             services: HashMap::new(),
             next_endpoint: 0,
-            queue: VecDeque::new(),
+            queue: HashMap::new(),
             blocked_connections: HashSet::new(),
             rng: SeededRng::new(),
         })))
@@ -110,11 +110,30 @@ impl Network {
     }
 
     fn send(&self, sender: Endpoint, receiver: Endpoint, packet: Packet) {
-        self.0.borrow_mut().queue.push_back((sender, receiver, packet));
+        self.0
+            .borrow_mut()
+            .queue
+            .entry((sender, receiver))
+            .or_insert_with(VecDeque::new)
+            .push_back(packet);
     }
 
     fn pop_packet(&self) -> Option<(Endpoint, Endpoint, Packet)> {
-        self.0.borrow_mut().queue.pop_front()
+        let mut network_impl = self.0.borrow_mut();
+        let keys: Vec<_> = network_impl.queue.keys().cloned().collect();
+        let (sender, receiver) = if let Some(key) = network_impl.rng.choose(&keys) {
+            *key
+        } else {
+            return None;
+        };
+        let result = network_impl.queue
+            .get_mut(&(sender, receiver))
+            .and_then(|packets| packets.pop_front().map(|packet| (sender, receiver, packet)));
+        if result.is_some() &&
+           network_impl.queue.get(&(sender, receiver)).map_or(false, VecDeque::is_empty) {
+            let _ = network_impl.queue.remove(&(sender, receiver));
+        }
+        result
     }
 
     fn process_packet(&self, sender: Endpoint, receiver: Endpoint, packet: Packet) {
@@ -174,6 +193,7 @@ pub struct ServiceImpl {
     event_sender: Option<CrustEventSender>,
     pending_bootstraps: u64,
     connections: Vec<(PeerId, Endpoint)>,
+    whitelist: HashSet<PeerId>,
 }
 
 impl ServiceImpl {
@@ -187,6 +207,7 @@ impl ServiceImpl {
             event_sender: None,
             pending_bootstraps: 0,
             connections: Vec::new(),
+            whitelist: HashSet::new(),
         }
     }
 
@@ -238,6 +259,14 @@ impl ServiceImpl {
 
     pub fn is_peer_connected(&self, peer_id: &PeerId) -> bool {
         self.find_endpoint_by_peer_id(peer_id).is_some()
+    }
+
+    pub fn whitelist_peer(&mut self, peer_id: PeerId) {
+        let _ = self.whitelist.insert(peer_id);
+    }
+
+    pub fn is_peer_whitelisted(&self, peer_id: &PeerId) -> bool {
+        self.whitelist.is_empty() || self.whitelist.contains(peer_id)
     }
 
     pub fn prepare_connection_info(&self, result_token: u32) {

@@ -76,7 +76,7 @@ pub fn calculate_relocated_name(mut close_nodes: Vec<XorName>,
 }
 
 #[cfg(test)]
-mod tests{
+mod tests {
     extern crate rand;
 
     use peer_manager::GROUP_SIZE;

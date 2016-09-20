@@ -15,16 +15,16 @@
 // Please review the Licences for the specific language governing permissions and limitations
 // relating to use of the SAFE Network Software.
 
-use lru_time_cache::LruCache;
-use rust_sodium::crypto::sign;
-use rust_sodium::crypto::hash::sha256;
-use std::time::Duration;
 
 use accumulator::Accumulator;
 use error::RoutingError;
 use id::PublicId;
+use lru_time_cache::LruCache;
 use message_filter::MessageFilter;
 use messages::{MessageContent, RoutingMessage};
+use rust_sodium::crypto::hash::sha256;
+use rust_sodium::crypto::sign;
+use std::time::Duration;
 
 const EXPIRY_DURATION_SECS: u64 = 60 * 20;
 

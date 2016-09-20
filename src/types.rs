@@ -15,9 +15,9 @@
 // Please review the Licences for the specific language governing permissions and limitations
 // relating to use of the SAFE Network Software.
 
+use maidsafe_utilities::event_sender::MaidSafeObserver;
 use rand::random;
 use xor_name::XorName;
-use maidsafe_utilities::event_sender::MaidSafeObserver;
 
 pub type RoutingActionSender = MaidSafeObserver<::action::Action>;
 
@@ -83,7 +83,7 @@ impl Default for MessageId {
 
 #[cfg(test)]
 #[cfg_attr(feature="clippy", allow(indexing_slicing))]
-mod tests{
+mod tests {
     use super::MessageId;
     use xor_name::{XOR_NAME_LEN, XorName};
 
