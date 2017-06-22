@@ -763,6 +763,9 @@ impl Node {
     /// Sends a signature for the list of members of a section with prefix `prefix` to our whole
     /// section if `dst` is `None`, or to the given node if it is `Some(name)`
     fn send_section_list_signature(&mut self, prefix: Prefix<XorName>, dst: Option<XorName>) {
+        if cfg!(not(feature = "use-mock-crust")) {
+            return;
+        }
         let section = match self.get_section_list(&prefix) {
             Ok(section) => section,
             Err(err) => {
@@ -2261,7 +2264,6 @@ impl Node {
             info!("{:?} SectionUpdate handled. Prefixes: {:?}",
                   self,
                   new_prefixes);
-            #[cfg(feature = "use-mock-crust")]
             for prefix in new_prefixes.difference(&old_prefixes) {
                 self.send_section_list_signature(*prefix, None);
             }
