@@ -18,14 +18,20 @@
 use error::RoutingError;
 #[cfg(feature="fake_clock")]
 use fake_clock::FakeClock as Instant;
+use lru_time_cache::LruCache;
 use maidsafe_utilities::serialisation;
-use messages::UserMessage;
+use messages::{DEFAULT_PRIORITY, MAX_PARTS, MAX_PART_LEN, MessageContent, RoutingMessage,
+               UserMessage};
+use routing_table::Authority;
 use std::cmp;
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::time::Duration;
 #[cfg(not(feature="fake_clock"))]
 use std::time::Instant;
 
+/// The period to ban a malicious client reconnect.
+const BAN_DURATION: u64 = 300;
 /// Maximum total bytes the `RateLimiter` allows at any given moment.
 const CAPACITY: u64 = 20 * 1024 * 1024;
 /// The number of bytes per second the `RateLimiter` will "leak".
@@ -41,6 +47,8 @@ pub struct RateLimiter {
     used: HashMap<IpAddr, u64>,
     /// Timestamp of when the `RateLimiter` was last updated.
     last_updated: Instant,
+    /// Contains the list of clients' ip that had malicious behaviour previously.
+    ban_list: LruCache<IpAddr, ()>,
 }
 
 impl RateLimiter {
@@ -48,21 +56,60 @@ impl RateLimiter {
         RateLimiter {
             used: HashMap::new(),
             last_updated: Instant::now(),
+            ban_list: LruCache::with_expiry_duration(Duration::from_secs(BAN_DURATION)),
         }
     }
 
-    /// Try to add a message. If the message is a form of get request, `CLIENT_GET_CHARGE` bytes
-    /// will be used, otherwise the actual length of the `payload` will be used. If adding that
-    /// amount will cause the client to exceed its share of the `CAPACITY` or cause the total
-    /// `CAPACITY` to be exceeded, `Err(ExceedsRateLimit)` is returned. If the message is invalid,
-    /// `Err(InvalidMessage)` is returned (this probably indicates malicious behaviour).
-    pub fn add_message(&mut self,
-                       online_clients: u64,
-                       client_ip: IpAddr,
-                       part_count: u32,
-                       part_index: u32,
-                       payload: &[u8])
-                       -> Result<(), RoutingError> {
+    /// Check whether the client is banned.
+    pub fn is_banned(&self, ip_addr: IpAddr) -> bool {
+        self.ban_list.contains_key(&ip_addr)
+    }
+
+    /// Check the validaity of the message. If message is not in a valid form, record the ip address
+    /// in the `ban_list`. Try to add the message when it is valid. If the message is a form of get
+    /// request, `CLIENT_GET_CHARGE` bytes will be used, otherwise the actual length of the
+    /// `payload` will be used. If adding that amount will cause the client to exceed its share of
+    /// the `CAPACITY` or cause the total `CAPACITY` to be exceeded, `Err(ExceedsRateLimit)` is
+    /// returned.
+    pub fn check_valid_client_message(&mut self,
+                                      online_clients: u64,
+                                      client_ip: IpAddr,
+                                      msg: &RoutingMessage)
+                                      -> Result<(), RoutingError> {
+        let res = match (&msg.src, &msg.content) {
+            (&Authority::Client { .. }, &MessageContent::Ack(_ack, priority))
+                if priority >= DEFAULT_PRIORITY => Ok(()),
+            (&Authority::Client { .. },
+             &MessageContent::UserMessagePart {
+                  ref part_count,
+                  ref part_index,
+                  ref priority,
+                  ref payload,
+                  ..
+              }) if *part_count <= MAX_PARTS && part_index < part_count &&
+                  *priority >= DEFAULT_PRIORITY &&
+                  payload.len() <= MAX_PART_LEN => {
+                self.add_message(online_clients, client_ip, *part_count, *part_index, payload)
+            }
+            _ => Err(RoutingError::RejectedClientMessage),
+        };
+        match res {
+            Ok(_) |
+            Err(RoutingError::ExceedsRateLimit) => {}
+            _ => {
+                let _ = self.ban_list.insert(client_ip, ());
+            }
+        }
+        res
+    }
+
+    fn add_message(&mut self,
+                   online_clients: u64,
+                   client_ip: IpAddr,
+                   part_count: u32,
+                   part_index: u32,
+                   payload: &[u8])
+                   -> Result<(), RoutingError> {
         self.update();
         let total_used: u64 = self.used.values().sum();
         let used = self.used.entry(client_ip).or_insert(0);
