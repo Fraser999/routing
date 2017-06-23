@@ -30,9 +30,8 @@ use itertools::Itertools;
 use log::LogLevel;
 use lru_time_cache::LruCache;
 use maidsafe_utilities::serialisation;
-use messages::{DEFAULT_PRIORITY, DirectMessage, HopMessage, MAX_PARTS, MAX_PART_LEN, Message,
-               MessageContent, RoutingMessage, SectionList, SignedMessage, UserMessage,
-               UserMessageCache};
+use messages::{DirectMessage, HopMessage, Message, MessageContent, RoutingMessage, SectionList,
+               SignedMessage, UserMessage, UserMessageCache};
 use outbox::{EventBox, EventBuf};
 use peer_manager::{ConnectionInfoPreparedResult, Peer, PeerManager, PeerState, ReconnectingPeer,
                    RoutingConnection, SectionMap};
@@ -837,8 +836,16 @@ impl Node {
                           -> Result<(), RoutingError> {
         hop_msg.verify(pub_id.signing_public_key())?;
         let hop_name_result = if self.peer_mgr.is_client(&pub_id) {
-            self.check_valid_client_message(&pub_id, hop_msg.content.routing_message())
-                .map(|_| *self.name())
+            if let Ok(ip_addr) = self.crust_service.get_peer_ip_addr(&pub_id) {
+                self.clients_rate_limiter
+                    .check_valid_client_message(self.peer_mgr.client_num() as u64,
+                                                ip_addr,
+                                                hop_msg.content.routing_message())
+                    .map(|_| *self.name())
+            } else {
+                warn!("{:?} Can't get IP address of client {:?}.", self, pub_id);
+                Err(RoutingError::RejectedClientMessage)
+            }
         } else if let Some(peer) = self.peer_mgr.get_peer(&pub_id) {
             match *peer.state() {
                 PeerState::Bootstrapper(_) => {
@@ -1367,45 +1374,6 @@ impl Node {
         }
     }
 
-    /// Returns `Ok` if a client is allowed to send the given message.
-    fn check_valid_client_message(&mut self,
-                                  pub_id: &PublicId,
-                                  msg: &RoutingMessage)
-                                  -> Result<(), RoutingError> {
-        match (&msg.src, &msg.content) {
-            (&Authority::Client { .. }, &MessageContent::Ack(_ack, priority))
-                if priority >= DEFAULT_PRIORITY => Ok(()),
-            (&Authority::Client { .. },
-             &MessageContent::UserMessagePart {
-                  ref part_count,
-                  ref part_index,
-                  ref priority,
-                  ref payload,
-                  ..
-              }) if *part_count <= MAX_PARTS && part_index < part_count &&
-                  *priority >= DEFAULT_PRIORITY &&
-                  payload.len() <= MAX_PART_LEN => {
-                if let Ok(ip_addr) = self.crust_service.get_peer_ip_addr(pub_id) {
-                    self.clients_rate_limiter
-                        .add_message(self.peer_mgr.client_num() as u64,
-                                     ip_addr,
-                                     *part_count,
-                                     *part_index,
-                                     payload)
-                } else {
-                    warn!("{:?} Can't get IP address of client {:?}.", self, pub_id);
-                    return Err(RoutingError::RejectedClientMessage);
-                }
-            }
-            _ => {
-                debug!("{:?} Illegitimate client message {:?}. Refusing to relay.",
-                       self,
-                       msg);
-                Err(RoutingError::RejectedClientMessage)
-            }
-        }
-    }
-
     fn respond_from_cache(&mut self,
                           routing_msg: &RoutingMessage,
                           route: u8)
@@ -1495,12 +1463,22 @@ impl Node {
             return Ok(());
         }
 
-        if peer_kind == CrustUser::Client && !self.peer_mgr.can_accept_client() {
-            debug!("{:?} Client {:?} rejected: We cannot accept more clients.",
-                   self,
-                   pub_id);
-            self.send_direct_message(pub_id, DirectMessage::BootstrapResponse(false));
-            return Ok(());
+        if peer_kind == CrustUser::Client {
+            if !self.peer_mgr.can_accept_client() {
+                debug!("{:?} Client {:?} rejected: We cannot accept more clients.",
+                       self,
+                       pub_id);
+                self.send_direct_message(pub_id, DirectMessage::BootstrapResponse(false));
+                return Ok(());
+            }
+            let ip_addr = self.crust_service.get_peer_ip_addr(&pub_id)?;
+            if self.clients_rate_limiter.is_banned(ip_addr) {
+                debug!("{:?} Client {:?} rejected: client had malicious behaviour previously.",
+                       self,
+                       pub_id);
+                self.send_direct_message(pub_id, DirectMessage::BootstrapResponse(false));
+                return Ok(());
+            }
         }
 
         self.peer_mgr.handle_bootstrap_request(&pub_id);
