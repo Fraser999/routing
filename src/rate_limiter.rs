@@ -35,6 +35,14 @@ const RATE: f64 = 20.0 * 1024.0 * 1024.0;
 /// Charge (in bytes) for a client get request.
 const CLIENT_GET_CHARGE: u64 = 2 * 1024 * 1024;
 
+#[cfg(feature = "use-mock-crust")]
+#[doc(hidden)]
+pub mod rate_limiter_consts {
+    pub const CAPACITY: u64 = super::CAPACITY;
+    pub const RATE: f64 = super::RATE;
+    pub const CLIENT_GET_CHARGE: u64 = super::CLIENT_GET_CHARGE;
+}
+
 /// Used to throttle the rate at which clients can send messages via this node. It works on a "leaky
 /// bucket" principle: there is a set rate at which bytes will leak out of the bucket, there is a
 /// maximum capacity for the bucket, and connected clients each get an equal share of this capacity.
@@ -175,6 +183,13 @@ impl RateLimiter {
 impl Default for RateLimiter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(feature = "use-mock-crust")]
+impl RateLimiter {
+    pub fn get_clients_usage(&self) -> BTreeMap<IpAddr, u64> {
+        self.used.clone()
     }
 }
 
